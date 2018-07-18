@@ -3,6 +3,7 @@ package tlsutil
 import (
 	"crypto/rsa"
 	"crypto/x509"
+	"strings"
 	"sync"
 
 	"k8s.io/api/core/v1"
@@ -44,7 +45,7 @@ type CA interface {
 	// data:
 	//  cert.pem: ..
 	//  cert-key.pem: ..
-	GenerateCert(cr runtime.Object, service v1.Service, config CertConfig) (*v1.Secret, error)
+	GenerateCert(cr runtime.Object, service *v1.Service, config *CertConfig) (*v1.Secret, error)
 	// CACert returns the CA cert as in a ConfigMap and the CA encryption key as in a Secret for the given
 	// Custom resource(CR); the CA is unique per CR. For example, calling
 	// CACert twice returns the same ConfigMap and Secret.
@@ -81,7 +82,7 @@ type keyAndCert struct {
 	cert *x509.Certificate
 }
 
-func (ca *CAImpl) GenerateCert(cr runtime.Object, service v1.Service, config CertConfig) (*v1.Secret, error) {
+func (ca *CAImpl) GenerateCert(cr runtime.Object, service *v1.Service, config *CertConfig) (*v1.Secret, error) {
 	a := meta.NewAccessor()
 	k, err := a.Kind(cr)
 	if err != nil {
@@ -109,6 +110,7 @@ func (ca *CAImpl) GenerateCert(cr runtime.Object, service v1.Service, config Cer
 		var (
 			caKey  *rsa.PrivateKey
 			caCert *x509.Certificate
+			err    error
 		)
 		v, ok := ca.casm.Load(k + n + ns)
 		if ok {
@@ -116,22 +118,22 @@ func (ca *CAImpl) GenerateCert(cr runtime.Object, service v1.Service, config Cer
 			caKey = kv.key
 			caCert = kv.cert
 		} else {
-			caKey, err := NewPrivateKey()
+			caKey, err = NewPrivateKey()
 			if err != nil {
 				return nil, err
 			}
-			caCert, err := NewSelfSignedCACertificate(caKey)
+			caCert, err = NewSelfSignedCACertificate(caKey)
 			if err != nil {
 				return nil, err
 			}
 			ca.casm.Store(k+n+ns, &keyAndCert{key: caKey, cert: caCert})
 		}
 
-		key, err := NewPrivateKey()
+		key, err = NewPrivateKey()
 		if err != nil {
 			return nil, err
 		}
-		cert, err := NewSignedCertificate(config, service, key, caCert, caKey)
+		cert, err = NewSignedCertificate(config, service, key, caCert, caKey)
 		if err != nil {
 			return nil, err
 		}
@@ -144,16 +146,24 @@ func (ca *CAImpl) GenerateCert(cr runtime.Object, service v1.Service, config Cer
 			APIVersion: "v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      k + n + config.CertName,
+			Name:      strings.ToLower(k) + "-" + n + "-" + config.CertName,
 			Namespace: ns,
 		},
 		Data: map[string][]byte{
-			"cert.pem":     EncodeCertificatePEM(cert),
-			"cert-key.pem": EncodePrivateKeyPEM(key),
+			v1.TLSPrivateKeyKey: EncodePrivateKeyPEM(key),
+			v1.TLSCertKey:       EncodeCertificatePEM(cert),
 		},
+		Type: v1.SecretTypeTLS,
 	}
 	return se, nil
 }
+
+const (
+	// TLSPrivateCAKeyKey is the key for the private CA key field.
+	TLSPrivateCAKeyKey = "ca.key"
+	// TLSCertKey is the key for tls CA certificates.
+	TLSCACertKey = "ca.crt"
+)
 
 func (ca *CAImpl) CACert(cr runtime.Object) (*v1.ConfigMap, *v1.Secret, error) {
 	a := meta.NewAccessor()
@@ -197,11 +207,11 @@ func (ca *CAImpl) CACert(cr runtime.Object) (*v1.ConfigMap, *v1.Secret, error) {
 			APIVersion: "v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      k + n + "-ca",
+			Name:      strings.ToLower(k) + "-" + n + "-ca",
 			Namespace: ns,
 		},
 		Data: map[string]string{
-			"ca.pem": string(EncodeCertificatePEM(caCert)),
+			TLSCACertKey: string(EncodeCertificatePEM(caCert)),
 		},
 	}
 	se := &v1.Secret{
@@ -210,11 +220,11 @@ func (ca *CAImpl) CACert(cr runtime.Object) (*v1.ConfigMap, *v1.Secret, error) {
 			APIVersion: "v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      k + n + "-ca",
+			Name:      strings.ToLower(k) + "-" + n + "-ca",
 			Namespace: ns,
 		},
 		Data: map[string][]byte{
-			"ca-key.pem": EncodePrivateKeyPEM(caKey),
+			TLSPrivateCAKeyKey: EncodePrivateKeyPEM(caKey),
 		},
 	}
 	return cm, se, nil

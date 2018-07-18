@@ -47,8 +47,12 @@ func EncodeCertificatePEM(cert *x509.Certificate) []byte {
 // The certificate has one-year lease.
 func NewSelfSignedCACertificate(key *rsa.PrivateKey) (*x509.Certificate, error) {
 	now := time.Now()
+	serial, err := rand.Int(rand.Reader, new(big.Int).SetInt64(math.MaxInt64))
+	if err != nil {
+		return nil, err
+	}
 	tmpl := x509.Certificate{
-		SerialNumber:          new(big.Int).SetInt64(0),
+		SerialNumber:          serial,
 		NotBefore:             now.UTC(),
 		NotAfter:              now.Add(duration365d).UTC(),
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
@@ -66,7 +70,10 @@ func NewSelfSignedCACertificate(key *rsa.PrivateKey) (*x509.Certificate, error) 
 // NewSignedCertificate signs a certificate using the given private key, CA and returns a signed certificate.
 // The certificate could be used for both client and server auth.
 // The certificate has one-year lease.
-func NewSignedCertificate(cfg CertConfig, service v1.Service, key *rsa.PrivateKey, caCert *x509.Certificate, caKey *rsa.PrivateKey) (*x509.Certificate, error) {
+func NewSignedCertificate(cfg *CertConfig, service *v1.Service, key *rsa.PrivateKey, caCert *x509.Certificate, caKey *rsa.PrivateKey) (*x509.Certificate, error) {
+	if caCert == nil || caKey == nil {
+		panic("caCert or caKey is nil")
+	}
 	serial, err := rand.Int(rand.Reader, new(big.Int).SetInt64(math.MaxInt64))
 	if err != nil {
 		return nil, err
